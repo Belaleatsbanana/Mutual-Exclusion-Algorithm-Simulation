@@ -1,7 +1,6 @@
 package coordinator;
 
 import shared.ResourceType;
-
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -12,19 +11,27 @@ import java.util.LinkedList;
 import java.util.Map;
 import java.util.Queue;
 
+/**
+ * The CoordinatorServer manages resource allocation between client processes and resource servers.
+ * It handles client requests and coordinates with ResourceServers to manage resource availability.
+ */
 public class CoordinatorServer implements Runnable {
     private final Socket processSocket;
+
+    // Static configuration for resource servers (type -> address)
     private static final Map<ResourceType, String> resourceServers = Map.of(
             ResourceType.TSHIRTS, "localhost:6001",
             ResourceType.BOTTOMS, "localhost:6002",
             ResourceType.SHOES, "localhost:6003"
     );
 
+    // Resource state tracking
     private static final Map<ResourceType, Boolean> resourceAvailability = new HashMap<>();
     private static final Map<ResourceType, String> currentProcesses = new HashMap<>();
     private static final Map<ResourceType, Queue<String>> waitingQueues = new HashMap<>();
     private static final Map<ResourceType, Queue<Socket>> waitingSockets = new HashMap<>();
 
+    // Initialize resource states and queues
     static {
         for (ResourceType type : ResourceType.values()) {
             resourceAvailability.put(type, true);
@@ -46,6 +53,7 @@ public class CoordinatorServer implements Runnable {
             processInput = new DataInputStream(processSocket.getInputStream());
             processOutput = new DataOutputStream(processSocket.getOutputStream());
 
+            // Parse incoming request
             String request = processInput.readUTF();
             String[] parts = request.split(" ");
             String action = parts[0];
@@ -61,18 +69,16 @@ public class CoordinatorServer implements Runnable {
                         currentProcesses.put(resourceType, processId);
                         System.out.println("Assigned resource " + resourceType + " to process " + processId);
 
-                        // Close the socket after redirecting
+                        // Cleanup connection after redirect
                         processOutput.close();
                         processInput.close();
                         processSocket.close();
                     } else {
-                        // Resource is busy: add to the waiting queue
+                        // Resource is busy: queue the request
                         processOutput.writeUTF("WAIT");
                         waitingQueues.get(resourceType).add(processId);
                         waitingSockets.get(resourceType).add(processSocket);
                         System.out.println("Added process " + processId + " to waiting queue for " + resourceType);
-
-                        // Do NOT close the socket here; it will be managed later
                     }
                 }
             }
@@ -83,7 +89,7 @@ public class CoordinatorServer implements Runnable {
     }
 
     public static void main(String[] args) throws IOException {
-        // Notification listener for resource free events
+        // Start notification listener for ResourceServer updates
         new Thread(() -> {
             try (ServerSocket notificationSocket = new ServerSocket(5001)) {
                 System.out.println("Coordinator notification listener started on port 5001");
@@ -97,7 +103,7 @@ public class CoordinatorServer implements Runnable {
             }
         }).start();
 
-        // Main server for client (process) connections
+        // Main server loop for client connections
         try (ServerSocket serverSocket = new ServerSocket(5000)) {
             System.out.println("Coordinator Server is listening on port 5000");
             while (true) {
@@ -108,6 +114,9 @@ public class CoordinatorServer implements Runnable {
         }
     }
 
+    /**
+     * Handles notifications from ResourceServers about freed resources.
+     */
     private static class NotificationHandler implements Runnable {
         private final Socket socket;
 
@@ -121,18 +130,20 @@ public class CoordinatorServer implements Runnable {
                 String message = input.readUTF();
                 System.out.println("Received message from ResourceServer: " + message);
                 String[] parts = message.split(" ");
-                // In the NotificationHandler's run() method:
+
                 if (parts[0].equals("FREE")) {
                     ResourceType resourceType = ResourceType.valueOf(parts[1]);
                     synchronized (resourceAvailability) {
                         currentProcesses.remove(resourceType);
                         Queue<String> queue = waitingQueues.get(resourceType);
                         Queue<Socket> sockets = waitingSockets.get(resourceType);
+
                         if (!queue.isEmpty() && !sockets.isEmpty()) {
+                            // Assign resource to next waiting process
                             String nextProcessId = queue.poll();
                             Socket nextSocket = sockets.poll();
+
                             try (DataOutputStream output = new DataOutputStream(nextSocket.getOutputStream())) {
-                                // Send REDIRECT to the waiting process
                                 output.writeUTF("REDIRECT " + resourceServers.get(resourceType));
                                 resourceAvailability.put(resourceType, false);
                                 currentProcesses.put(resourceType, nextProcessId);
@@ -140,8 +151,8 @@ public class CoordinatorServer implements Runnable {
                             } catch (IOException e) {
                                 System.out.println("Error sending redirect: " + e.getMessage());
                             }
-                            // Do NOT close nextSocket here; let the process handle it
                         } else {
+                            // Mark resource as available if no waiting processes
                             resourceAvailability.put(resourceType, true);
                             System.out.println("Resource " + resourceType + " is now free");
                         }
@@ -152,7 +163,7 @@ public class CoordinatorServer implements Runnable {
                 e.printStackTrace();
             } finally {
                 try {
-                    socket.close(); // Close the notification socket
+                    socket.close();
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
@@ -160,14 +171,13 @@ public class CoordinatorServer implements Runnable {
         }
     }
 
-    // Thread-safe getter for current processes
+    // Thread-safe accessors for GUI
     public static Map<ResourceType, String> getCurrentProcesses() {
         synchronized (resourceAvailability) {
             return new HashMap<>(currentProcesses);
         }
     }
 
-    // Thread-safe getter for waiting queues
     public static Map<ResourceType, Queue<String>> getWaitingQueues() {
         synchronized (resourceAvailability) {
             Map<ResourceType, Queue<String>> copy = new HashMap<>();

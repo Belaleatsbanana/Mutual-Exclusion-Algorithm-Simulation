@@ -1,5 +1,9 @@
+import process.ProcessGUI;
+
 public class Main {
     public static void main(String[] args) {
-        System.out.println("Hello, World!");
+        ProcessGUI.main(new String[]{"NasrCity Branch"});
+        ProcessGUI.main(new String[]{"Tagamo3 Branch"});
+        ProcessGUI.main(new String[]{"Menofeya Branch"});
     }
 }
